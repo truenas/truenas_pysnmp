@@ -1,0 +1,39 @@
+name: Build and Test
+
+on:
+  pull_request:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    container: debian:trixie
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install system dependencies
+      run: |
+        apt update
+        apt install -y python3-dev build-essential devscripts debhelper
+        apt install -y dh-python pybuild-plugin-pyproject python3-pytest python3-all-dev
+        apt install -y python3-setuptools python3-mypy libsnmp-dev
+
+    - name: Test Debian package build
+      run: |
+        dpkg-buildpackage -us -uc -b
+
+    - name: Install built package
+      run: |
+        dpkg -i ../python3-truenas-pysnmp_*.deb
+
+    - name: Run stub validation
+      run: |
+        python3 -m mypy.stubtest truenas_pysnmp --allowlist tests/.stubtest_allowlist.txt
+
+    - name: Run tests
+      run: |
+        python3 -m pytest tests/ -v
