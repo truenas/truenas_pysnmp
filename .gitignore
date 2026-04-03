@@ -1,0 +1,15 @@
+.idea/
+__pycache__/
+*.egg-info/
+*.so
+.pybuild/
+build/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper.log
+debian/*.postinst.debhelper
+debian/*.prerm.debhelper
+debian/*.substvars
+debian/python3-truenas-pysnmp/
+.pytest_cache/
