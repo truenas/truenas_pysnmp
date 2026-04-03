@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <sys/stat.h>
 #include <net-snmp/net-snmp-config.h>
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/library/snmpusm.h>
@@ -662,7 +663,14 @@ PyInit__native(void)
 	}
 
 	SOCK_STARTUP;
+	/* Store persistent state in /data/subsystems/snmp/ to survive upgrades */
+	(void)mkdir("/data/subsystems/snmp", 0755);
+	netsnmp_ds_set_string(NETSNMP_DS_LIBRARY_ID,
+			      NETSNMP_DS_LIB_PERSISTENT_DIR,
+			      "/data/subsystems/snmp");
 	init_snmp(SNMP_APP_NAME);
+	/* Write engine ID to persistent file so other processes can read it */
+	snmp_store(SNMP_APP_NAME);
 
 	/* Generate engine ID once for the process lifetime */
 	setup_engineID(NULL, NULL);
