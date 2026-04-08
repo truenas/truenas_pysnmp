@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ fix-engine-id-drift-testing ]
   push:
-    branches: [ master ]
+    branches: [ fix-engine-id-drift-testing ]
 
 jobs:
   test-build:
