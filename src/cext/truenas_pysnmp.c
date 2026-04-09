@@ -268,9 +268,9 @@ configure_v3_session(netsnmp_session *session,
 	}
 	session->contextEngineIDLen = eid_len;
 
-	/* Boots/time setup — matches upstream snmptrap.c approach */
+	/* Use epoch time so engineTime always increases across HA failovers */
 	session->engineBoots = 1;
-	session->engineTime = get_uptime();
+	session->engineTime = (long)time(NULL);
 	set_enginetime(session->securityEngineID,
 		       session->securityEngineIDLen,
 		       session->engineBoots,
