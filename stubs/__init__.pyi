@@ -135,10 +135,10 @@ def send_alert_cancellation(
 
 
 def get_engine_id() -> bytes:
-    """Return the SNMPv3 engine ID used by this module.
+    """Return the SNMPv3 engine ID.
 
-    The engine ID is generated once at module import and remains stable
-    for the lifetime of the process.
+    Automatically reloads from the persistent file if it has changed
+    since the last call (e.g. after config restore or HA sync).
 
     Returns
     -------
@@ -147,7 +147,7 @@ def get_engine_id() -> bytes:
 
     Raises
     ------
-    SNMPError
-        If the engine ID was not initialized.
+    RuntimeError
+        If the engine ID is not available.
     """
     ...
