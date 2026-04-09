@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
+#include <sys/stat.h>
 #include <net-snmp/net-snmp-config.h>
 #include <net-snmp/net-snmp-includes.h>
 #include <net-snmp/library/snmpusm.h>
@@ -25,11 +26,15 @@ static const oid oid_alert_id[] = { 1,3,6,1,4,1,50536,2,2,1,0 };
 static const oid oid_alert_level[] = { 1,3,6,1,4,1,50536,2,2,2,0 };
 static const oid oid_alert_message[] = { 1,3,6,1,4,1,50536,2,2,3,0 };
 
+#define PERSIST_DIR "/data/subsystems/snmp"
+#define PERSIST_FILE PERSIST_DIR "/truenas_pysnmp.conf"
+
 /* Module state */
 typedef struct {
 	PyObject *SNMPError;
 	u_char *engine_id;
 	size_t engine_id_len;
+	time_t config_mtime;
 } pysnmp_state_t;
 
 static PyModuleDef pysnmp_module;
@@ -43,6 +48,31 @@ get_pysnmp_state(PyObject *module)
 			return NULL;
 	}
 	return (pysnmp_state_t *)PyModule_GetState(module);
+}
+
+static time_t
+get_config_mtime(void)
+{
+	struct stat st;
+	return (stat(PERSIST_FILE, &st) == 0) ? st.st_mtime : 0;
+}
+
+/* Re-read engine ID if persistent file changed */
+static void
+reload_engine_id_if_needed(pysnmp_state_t *state)
+{
+	time_t mtime = get_config_mtime();
+	if (mtime == state->config_mtime)
+		return;
+
+	state->config_mtime = mtime;
+	free(state->engine_id);
+	state->engine_id = NULL;
+	state->engine_id_len = 0;
+	free_engineID(0, 0, NULL, NULL);
+	read_config_with_type(PERSIST_FILE, SNMP_APP_NAME);
+	setup_engineID(NULL, NULL);
+	state->engine_id = snmpv3_generate_engineID(&state->engine_id_len);
 }
 
 #define TRAP_ERR_SIZE 512
@@ -238,9 +268,9 @@ configure_v3_session(netsnmp_session *session,
 	}
 	session->contextEngineIDLen = eid_len;
 
-	/* Boots/time setup — matches upstream snmptrap.c approach */
+	/* Use epoch time so engineTime always increases across HA failovers */
 	session->engineBoots = 1;
-	session->engineTime = get_uptime();
+	session->engineTime = (long)time(NULL);
 	set_enginetime(session->securityEngineID,
 		       session->securityEngineIDLen,
 		       session->engineBoots,
@@ -474,15 +504,20 @@ dispatch_trap(trap_args_t *ta,
 	const u_char *eid = (const u_char *)ta->engine_id;
 	size_t eid_len = ta->engine_id_len;
 
-	/* Resolve engine_id fallback while GIL is held */
-	if (eid == NULL || eid_len == 0) {
+	/* Resolve engine_id fallback while GIL is held (v3 only) */
+	if (ta->v3 && (eid == NULL || eid_len == 0)) {
 		pysnmp_state_t *state = get_pysnmp_state(NULL);
 		if (state == NULL) {
 			PyErr_SetString(PyExc_RuntimeError, "Module state not available");
 			return NULL;
 		}
+		reload_engine_id_if_needed(state);
 		eid = state->engine_id;
 		eid_len = state->engine_id_len;
+		if (eid == NULL || eid_len == 0) {
+			PyErr_SetString(PyExc_RuntimeError, "Engine ID not available");
+			return NULL;
+		}
 	}
 
 	Py_BEGIN_ALLOW_THREADS
@@ -585,14 +620,19 @@ py_send_alert_cancellation(PyObject *self, PyObject *args, PyObject *kwds)
 PyDoc_STRVAR(get_engine_id__doc__,
 "get_engine_id() -> bytes\n"
 "\n"
-"Return the SNMPv3 engine ID generated at module import.\n"
+"Return the SNMPv3 engine ID.\n"
 );
 
 static PyObject *
 py_get_engine_id(PyObject *self, PyObject *Py_UNUSED(args))
 {
 	pysnmp_state_t *state = get_pysnmp_state(NULL);
-	if (state == NULL || state->engine_id == NULL || state->engine_id_len == 0) {
+	if (state == NULL) {
+		PyErr_SetString(PyExc_RuntimeError, "Module state not available");
+		return NULL;
+	}
+	reload_engine_id_if_needed(state);
+	if (state->engine_id == NULL || state->engine_id_len == 0) {
 		PyErr_SetString(PyExc_RuntimeError, "Engine ID not initialized");
 		return NULL;
 	}
@@ -662,9 +702,14 @@ PyInit__native(void)
 	}
 
 	SOCK_STARTUP;
+	/* Persist engine ID in /data/subsystems/snmp/ to survive upgrades */
+	(void)mkdir(PERSIST_DIR, 0755);
+	netsnmp_ds_set_string(NETSNMP_DS_LIBRARY_ID,
+			      NETSNMP_DS_LIB_PERSISTENT_DIR, PERSIST_DIR);
 	init_snmp(SNMP_APP_NAME);
+	/* Flush engine ID to persistent file so other processes can read it */
+	snmp_store(SNMP_APP_NAME);
 
-	/* Generate engine ID once for the process lifetime */
 	setup_engineID(NULL, NULL);
 	state->engine_id = snmpv3_generate_engineID(&state->engine_id_len);
 	if (state->engine_id == NULL) {
@@ -673,6 +718,7 @@ PyInit__native(void)
 		Py_DECREF(mod);
 		return NULL;
 	}
+	state->config_mtime = get_config_mtime();
 
 	state->SNMPError = PyErr_NewException(MODULE_NAME ".SNMPError",
 					      PyExc_RuntimeError, NULL);
