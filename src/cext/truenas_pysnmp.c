@@ -707,6 +707,8 @@ PyInit__native(void)
 	netsnmp_ds_set_string(NETSNMP_DS_LIBRARY_ID,
 			      NETSNMP_DS_LIB_PERSISTENT_DIR, PERSIST_DIR);
 	init_snmp(SNMP_APP_NAME);
+	/* net-snmp creates cert_indexes as 0700; /data/subsystems dirs must be 0755 */
+	(void)chmod(PERSIST_DIR "/cert_indexes", 0755);
 	/* Flush engine ID to persistent file so other processes can read it */
 	snmp_store(SNMP_APP_NAME);
 
